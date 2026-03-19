@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using TaskbarLyrics.Core.Abstractions;
@@ -236,7 +237,14 @@ public abstract class LrcLibSmtcLyricProviderBase : ILyricProvider
 
                 var itemTitle = GetStringProperty(item, "trackName", "track_name", "name", "title");
                 var itemArtist = GetStringProperty(item, "artistName", "artist_name", "artist");
-                var score = ScoreSearchResult(targetTitle, targetArtist, itemTitle, itemArtist);
+                
+                int itemDuration = 0;
+                if (item.TryGetProperty("duration", out var durProp)) 
+                {
+                    if (durProp.ValueKind == JsonValueKind.Number) itemDuration = (int)durProp.GetDouble();
+                }
+
+                var score = ScoreSearchResult(targetTitle, targetArtist, itemTitle, itemArtist, itemDuration);
 
                 var candidate = new SearchResult(score, payload!.Value);
                 if (best is null || candidate.Score > best.Score)
@@ -247,8 +255,9 @@ public abstract class LrcLibSmtcLyricProviderBase : ILyricProvider
 
             return best;
         }
-        catch
+        catch (Exception ex)
         {
+            Debug.WriteLine($"[LrcLib] Search error: {ex.Message}");
             return null;
         }
     }
@@ -392,57 +401,75 @@ public abstract class LrcLibSmtcLyricProviderBase : ILyricProvider
         }
     }
 
-    private static int ScoreSearchResult(string targetTitle, string targetArtist, string? resultTitle, string? resultArtist)
+    private static int ScoreSearchResult(string targetTitle, string targetArtist, string? resultTitle, string? resultArtist, int resultDurationInSeconds = 0)
     {
-        var titleTarget = NormalizeForMatch(targetTitle);
-        var artistTarget = NormalizeForMatch(targetArtist);
-        var titleResult = NormalizeForMatch(resultTitle);
-        var artistResult = NormalizeForMatch(resultArtist);
+        if (string.IsNullOrWhiteSpace(resultTitle)) return 0;
 
-        var score = 0;
+        // 1. 归一化对比
+        var cleanedTargetTitle = NormalizeForMatch(targetTitle);
+        var cleanedTargetArtist = NormalizeForMatch(targetArtist);
+        var cleanedResultTitle = NormalizeForMatch(resultTitle);
+        var cleanedResultArtist = NormalizeForMatch(resultArtist);
 
-        score += ScoreField(titleTarget, titleResult, 100, 60, 30);
-        score += ScoreField(artistTarget, artistResult, 60, 35, 15);
-
-        if (!string.IsNullOrWhiteSpace(titleTarget) && !string.IsNullOrWhiteSpace(titleResult) &&
-            !string.IsNullOrWhiteSpace(artistTarget) && !string.IsNullOrWhiteSpace(artistResult) &&
-            titleTarget == titleResult && artistTarget == artistResult)
+        // 2. 版本冲突检测 (Conflict Detection) - 严防翻唱/原曲混淆
+        string[] conflictKeywords = { "live", "remix", "acoustic", "demo", "instrumental", "vma", "award", "现场", "演唱会", "颁奖", "典礼" };
+        foreach (var keyword in conflictKeywords)
         {
-            score += 80;
+            if (HasVersionConflict(targetTitle, resultTitle ?? string.Empty, keyword)) return 0; // 强冲突直接归零
         }
 
-        return score;
+        // 3. 模糊匹配相似度 (Fuzzy Matching)
+        double titleSim = CalculateSimilarity(cleanedTargetTitle, cleanedResultTitle);
+        double artistSim = CalculateSimilarity(cleanedTargetArtist, cleanedResultArtist);
+
+
+        // 5. 权重计算
+        if (titleSim < 0.7 && !cleanedResultTitle.Contains(cleanedTargetTitle) && !cleanedTargetTitle.Contains(cleanedResultTitle)) 
+            return 0;
+
+        int score = 0;
+        score += (int)(titleSim * 60);
+        score += (int)(artistSim * 30);
+        if (cleanedTargetTitle == cleanedResultTitle) score += 5;
+        if (cleanedTargetArtist == cleanedResultArtist) score += 5;
+
+        return Math.Clamp(score, 0, 100);
+    }
+
+    private static bool HasVersionConflict(string target, string result, string keyword)
+    {
+        bool targetHas = target.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+        bool resultHas = result.Contains(keyword, StringComparison.OrdinalIgnoreCase);
+        return targetHas != resultHas;
+    }
+
+    private static double CalculateSimilarity(string s, string t)
+    {
+        if (string.IsNullOrEmpty(s) || string.IsNullOrEmpty(t)) return 0;
+        int n = s.Length, m = t.Length;
+        int[,] d = new int[n + 1, m + 1];
+        for (int i = 0; i <= n; d[i, 0] = i++) ;
+        for (int j = 0; j <= m; d[0, j] = j++) ;
+        for (int i = 1; i <= n; i++)
+        {
+            for (int j = 1; j <= m; j++)
+            {
+                int cost = (t[j - 1] == s[i - 1]) ? 0 : 1;
+                d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + cost);
+            }
+        }
+        return 1.0 - ((double)d[n, m] / Math.Max(s.Length, t.Length));
     }
 
     private static int ScoreField(string target, string result, int exact, int contains, int overlap)
     {
-        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(result))
-        {
-            return 0;
-        }
-
-        if (target == result)
-        {
-            return exact;
-        }
-
-        if (target.Contains(result, StringComparison.Ordinal) || result.Contains(target, StringComparison.Ordinal))
-        {
-            return contains;
-        }
-
+        // Deprecated helper but keeping for now if used elsewhere
+        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(result)) return 0;
+        if (target == result) return exact;
+        if (target.Contains(result, StringComparison.Ordinal) || result.Contains(target, StringComparison.Ordinal)) return contains;
         var commonPrefix = 0;
         var max = Math.Min(target.Length, result.Length);
-        for (var i = 0; i < max; i++)
-        {
-            if (target[i] != result[i])
-            {
-                break;
-            }
-
-            commonPrefix++;
-        }
-
+        for (var i = 0; i < max; i++) { if (target[i] != result[i]) break; commonPrefix++; }
         return commonPrefix >= 2 ? overlap : 0;
     }
 

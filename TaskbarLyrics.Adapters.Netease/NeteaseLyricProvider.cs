@@ -1,4 +1,4 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -26,10 +26,7 @@ public sealed class NeteaseLyricProvider : ILyricProvider
 
     public async Task<LyricDocument?> GetLyricsAsync(TrackInfo track, CancellationToken cancellationToken = default)
     {
-        if (!string.Equals(track.SourceApp, SourceApp, StringComparison.OrdinalIgnoreCase))
-        {
-            return null;
-        }
+        // Removed strict source check to allow serving lyrics for other apps (Spotify, Apple Music, etc.)
 
         if (string.Equals(track.Title, "Unknown Title", StringComparison.OrdinalIgnoreCase))
         {
@@ -180,7 +177,11 @@ public sealed class NeteaseLyricProvider : ILyricProvider
 
                 var songName = GetStringProperty(song, "name", "songName");
                 var artistName = ExtractOfficialArtistName(song);
-                var score = ScoreSearchResult(targetTitle, targetArtist, songName, artistName);
+                
+                int duration = 0;
+                if (song.TryGetProperty("duration", out var durProp)) duration = (int)(durProp.GetInt64() / 1000);
+
+                var score = ScoreSearchResult(targetTitle, targetArtist, songName, artistName, duration);
                 result.Add(new OfficialSongCandidate(songId, score));
             }
 
@@ -403,8 +404,14 @@ public sealed class NeteaseLyricProvider : ILyricProvider
 
                 var itemTitle = GetStringProperty(item, "trackName", "track_name", "name", "title");
                 var itemArtist = GetStringProperty(item, "artistName", "artist_name", "artist");
-                var score = ScoreSearchResult(targetTitle, targetArtist, itemTitle, itemArtist);
+                
+                int itemDuration = 0;
+                if (item.TryGetProperty("duration", out var durProp)) 
+                {
+                    if (durProp.ValueKind == JsonValueKind.Number) itemDuration = (int)durProp.GetDouble();
+                }
 
+                var score = ScoreSearchResult(targetTitle, targetArtist, itemTitle, itemArtist, itemDuration);
                 var candidate = new SearchResult(score, payload!.Value);
                 if (best is null || candidate.Score > best.Score)
                 {
@@ -559,80 +566,16 @@ public sealed class NeteaseLyricProvider : ILyricProvider
         }
     }
 
-    private static int ScoreSearchResult(string targetTitle, string targetArtist, string? resultTitle, string? resultArtist)
+    private static int ScoreSearchResult(string targetTitle, string targetArtist, string? resultTitle, string? resultArtist, int resultDuration = 0)
     {
-        var titleTarget = NormalizeForMatch(targetTitle);
-        var artistTarget = NormalizeForMatch(targetArtist);
-        var titleResult = NormalizeForMatch(resultTitle);
-        var artistResult = NormalizeForMatch(resultArtist);
-
-        var score = 0;
-
-        score += ScoreField(titleTarget, titleResult, 100, 60, 30);
-        score += ScoreField(artistTarget, artistResult, 60, 35, 15);
-
-        if (!string.IsNullOrWhiteSpace(titleTarget) && !string.IsNullOrWhiteSpace(titleResult) &&
-            !string.IsNullOrWhiteSpace(artistTarget) && !string.IsNullOrWhiteSpace(artistResult) &&
-            titleTarget == titleResult && artistTarget == artistResult)
-        {
-            score += 80;
-        }
-
-        return score;
+        // Notice: We don't have full TrackInfo here because this provider's helper methods
+        // currently only pass strings. We will use a mock TrackInfo for scoring or update signatures.
+        // For Netease, since we only care about relative scores within the same scale:
+        var mockTarget = new TrackInfo("", targetTitle, targetArtist, "Netease", TimeSpan.Zero);
+        return LyricMatcher.Score(mockTarget, resultTitle ?? string.Empty, resultArtist ?? string.Empty, resultDuration);
     }
 
-    private static int ScoreField(string target, string result, int exact, int contains, int overlap)
-    {
-        if (string.IsNullOrWhiteSpace(target) || string.IsNullOrWhiteSpace(result))
-        {
-            return 0;
-        }
-
-        if (target == result)
-        {
-            return exact;
-        }
-
-        if (target.Contains(result, StringComparison.Ordinal) || result.Contains(target, StringComparison.Ordinal))
-        {
-            return contains;
-        }
-
-        var commonPrefix = 0;
-        var max = Math.Min(target.Length, result.Length);
-        for (var i = 0; i < max; i++)
-        {
-            if (target[i] != result[i])
-            {
-                break;
-            }
-
-            commonPrefix++;
-        }
-
-        return commonPrefix >= 2 ? overlap : 0;
-    }
-
-    private static string NormalizeForMatch(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        var buffer = new char[value.Length];
-        var idx = 0;
-
-        foreach (var ch in value.Trim().ToLowerInvariant())
-        {
-            if (char.IsLetterOrDigit(ch))
-            {
-                buffer[idx++] = ch;
-            }
-        }
-
-        return idx == 0 ? string.Empty : new string(buffer, 0, idx);
-    }
+    private static string NormalizeForMatch(string? value) => LyricMatcher.NormalizeForSearch(value);
 
     private static string BuildCacheKey(string title, string artist)
     {

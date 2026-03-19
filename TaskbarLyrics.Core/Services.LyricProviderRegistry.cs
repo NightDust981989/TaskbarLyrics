@@ -1,86 +1,62 @@
 using TaskbarLyrics.Core.Abstractions;
 using TaskbarLyrics.Core.Models;
-using TaskbarLyrics.Core.Utilities;
 
 namespace TaskbarLyrics.Core.Services;
 
 public sealed class LyricProviderRegistry : ILyricProviderRegistry
 {
-    private readonly Dictionary<string, List<ILyricProvider>> _providers;
+    private readonly IEnumerable<ILyricProvider> _providers;
 
     public LyricProviderRegistry(IEnumerable<ILyricProvider> providers)
     {
-        _providers = new Dictionary<string, List<ILyricProvider>>(StringComparer.OrdinalIgnoreCase);
-
-        foreach (var provider in providers)
-        {
-            if (!_providers.TryGetValue(provider.SourceApp, out var list))
-            {
-                list = new List<ILyricProvider>();
-                _providers[provider.SourceApp] = list;
-            }
-
-            list.Add(provider);
-        }
+        _providers = providers;
     }
 
-    public async Task<LyricResolveResult> ResolveLyricsAsync(
-        TrackInfo track,
-        CancellationToken cancellationToken = default)
+    public async Task<List<LyricResolveResult>> ResolveLyricsAsync(TrackInfo track, CancellationToken cancellationToken = default)
     {
-        var normalizedTrack = BuildNormalizedSearchTrack(track);
-        var route = LyricSourceRoutingPolicy.BuildRoute(normalizedTrack);
-        foreach (var sourceKey in route)
+        var results = new List<LyricResolveResult>();
+        
+        // Priority Hierarchy: 
+        // 1. Primary source for the current app (Weight 3)
+        // 2. QQ Music (Weight 2)
+        // 3. Netease (Weight 1)
+        // 4. Default sources like LRCLIB (Weight 0)
+        var sortedProviders = _providers.OrderByDescending(p => 
+            p.SourceApp == track.SourceApp ? 3 : 
+            p.SourceApp == "QQMusic" ? 2 : 
+            p.SourceApp == "Netease" ? 1 : 0).ToList();
+
+        foreach (var p in sortedProviders)
         {
-            if (!_providers.TryGetValue(sourceKey, out var providersForSource))
+            try
             {
-                continue;
-            }
+                var doc = await p.GetLyricsAsync(track, cancellationToken);
+                var result = new LyricResolveResult(p.SourceApp, doc);
+                results.Add(result);
 
-            foreach (var provider in providersForSource)
-            {
-                var effectiveTrack =
-                    string.Equals(sourceKey, "*", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(sourceKey, normalizedTrack.SourceApp, StringComparison.OrdinalIgnoreCase)
-                        ? normalizedTrack
-                        : normalizedTrack with { SourceApp = sourceKey };
-
-                var result = await provider.GetLyricsAsync(effectiveTrack, cancellationToken);
-                if (result is not null && result.Lines.Count > 0)
+                // Early Exit: If the current provider gives us a decent match (score >= 60) 
+                // and it's the primary provider for this source, stop searching.
+                var exitThreshold = (p.SourceApp == track.SourceApp) ? 60 : 90;
+                if (doc != null && doc.BestScore >= exitThreshold)
                 {
-                    return new LyricResolveResult(
-                        Document: result,
-                        SourceApp: sourceKey);
+                    break;
                 }
             }
+            catch
+            {
+                results.Add(new LyricResolveResult(p.SourceApp, null));
+            }
         }
-
-        return new LyricResolveResult(
-            Document: null,
-            SourceApp: null);
-    }
-
-    private static TrackInfo BuildNormalizedSearchTrack(TrackInfo track)
-    {
-        var normalizedTitle = ChineseScriptConverter.ToSimplified(track.Title);
-        var normalizedArtist = ChineseScriptConverter.ToSimplified(track.Artist);
-
-        if (string.Equals(normalizedTitle, track.Title, StringComparison.Ordinal) &&
-            string.Equals(normalizedArtist, track.Artist, StringComparison.Ordinal))
-        {
-            return track;
-        }
-
-        return track with
-        {
-            Title = normalizedTitle,
-            Artist = normalizedArtist
-        };
+        
+        return results;
     }
 
     public async Task<LyricDocument?> GetLyricsAsync(TrackInfo track, CancellationToken cancellationToken = default)
     {
-        var resolved = await ResolveLyricsAsync(track, cancellationToken);
-        return resolved.Document;
+        var results = await ResolveLyricsAsync(track, cancellationToken);
+        return results
+            .Where(r => r.Document != null)
+            .OrderByDescending(r => r.Document!.BestScore)
+            .FirstOrDefault()?.Document;
     }
 }

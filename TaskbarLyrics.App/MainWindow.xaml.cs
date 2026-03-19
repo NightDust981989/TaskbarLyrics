@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -348,7 +348,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
             }
 
             var current = string.IsNullOrWhiteSpace(frame.CurrentLine)
-                ? "Waiting for lyrics..."
+                ? "Searching for lyrics..."
                 : frame.CurrentLine;
 
             var next = frame.NextLine;
@@ -710,7 +710,11 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         var trackId = snapshot.Track?.Id;
         if (string.Equals(trackId, _lastCoverTrackId, StringComparison.Ordinal))
         {
-            return;
+            // Proceed only if we previously had no cover for this track but now we have bytes.
+            if (_currentCoverDataUri != null || snapshot.CoverImageBytes == null)
+            {
+                return;
+            }
         }
 
         _lastCoverTrackId = trackId;
@@ -1334,7 +1338,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
     }
 
     function setCurrentLine(line) {
-      const safe = toDisplayLine(line, "Waiting for lyrics...");
+      const safe = toDisplayLine(line, "Searching for lyrics...");
       if (currentLineTextEl) {
         currentLineTextEl.textContent = safe;
       }
@@ -1457,9 +1461,15 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
       if (hasLineIndex) {
         if (!Number.isInteger(lastCurrentLineIndex) || lastCurrentLineIndex < 0) {
-          setCurrentLine(safeCurrent);
-          setSecondaryLine(safeNext);
-          updateSecondaryOpacity(p);
+          // If we were in a non-lyric state (e.g. "Searching for lyrics..."), 
+          // use a transition to slide into the first line smoothly.
+          if (displayedCurrent === "Searching for lyrics...") {
+            startTransition(safeCurrent, safeNext, p, currentLineIndex);
+          } else {
+            setCurrentLine(safeCurrent);
+            setSecondaryLine(safeNext);
+            updateSecondaryOpacity(p);
+          }
           lastCurrentLineIndex = currentLineIndex;
           lastLineProgress = p;
           return;
@@ -1560,7 +1570,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
       }
 
       isTransitioning = true;
-      const promoted = toDisplayLine(newCurrent, "Waiting for lyrics...");
+      const promoted = toDisplayLine(newCurrent, "Searching for lyrics...");
       const upcoming = toDisplayLine(newNext, " ");
       transitionBaseNextOpacity = secondaryOpacity;
       transitionBaseNextFontSize = Number.parseFloat(window.getComputedStyle(nextLineEl).fontSize || "12");
@@ -1627,7 +1637,7 @@ public partial class MainWindow : Window, INotifyPropertyChanged
 
     window.taskbarLyrics = {
       setLyrics(current, next, progress, currentLineIndex, trackId) {
-        const safeCurrent = toDisplayLine(current, "Waiting for lyrics...");
+        const safeCurrent = toDisplayLine(current, "Searching for lyrics...");
         const safeNext = toDisplayLine(next, " ");
         const p = clamp01(progress);
         const lineIndex = Number(currentLineIndex);

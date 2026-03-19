@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using TaskbarLyrics.Core.Abstractions;
 using TaskbarLyrics.Core.Models;
@@ -78,9 +78,9 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
             title = media?.Title?.Trim() ?? string.Empty;
             artist = media?.Artist?.Trim() ?? string.Empty;
 
-            if (!sourceFromFallback)
+            if (media?.Thumbnail != null)
             {
-                coverImageBytes = await ReadCoverBytesAsync(media?.Thumbnail, cancellationToken);
+                coverImageBytes = await ReadCoverBytesAsync(media.Thumbnail, cancellationToken);
             }
         }
         catch
@@ -109,7 +109,7 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
         }
 
         var trackId = $"{sourceApp}|{title}|{artist}";
-        var track = new TrackInfo(trackId, title, artist, sourceApp);
+        var track = new TrackInfo(trackId, title, artist, sourceApp, timeline.EndTime);
         var diagnostics = new SmtcTimelineDiagnostics(
             CapturedAtUtc: nowUtc,
             SourceAppUserModelId: session.SourceAppUserModelId ?? string.Empty,
@@ -160,7 +160,8 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                         Id: $"Netease|{inferredTitle}|{inferredArtist}",
                         Title: inferredTitle,
                         Artist: inferredArtist,
-                        SourceApp: "Netease"),
+                        SourceApp: "Netease",
+                        Duration: TimeSpan.Zero),
                     CoverImageBytes: null);
             }
 
@@ -176,7 +177,8 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                     Id: "Netease|ProcessFallback",
                     Title: "Unknown Title",
                     Artist: "Unknown Artist",
-                    SourceApp: "Netease"),
+                    SourceApp: "Netease",
+                    Duration: TimeSpan.Zero),
                 CoverImageBytes: null);
         }
 
@@ -194,7 +196,8 @@ public sealed class SmtcMusicSessionProvider : IMusicSessionProvider
                     Id: "QQMusic|ProcessFallback",
                     Title: "Unknown Title",
                     Artist: "Unknown Artist",
-                    SourceApp: "QQMusic"),
+                    SourceApp: "QQMusic",
+                    Duration: TimeSpan.Zero),
                 CoverImageBytes: null);
         }
 
