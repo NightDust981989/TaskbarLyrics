@@ -17,7 +17,6 @@ namespace TaskbarLyrics.Core.Services;
 
 public sealed class LyricifyLyricProvider : LyricProviderBase
 {
-    private const int MinimumMatchScore = 70;
     private static readonly HttpClient SharedHttpClient = new();
     private readonly Lyricify.Lyrics.Searchers.Searchers _searcherType;
 
@@ -101,7 +100,7 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
                                 Candidate = candidate,
                                 Score = ScoreCandidate(track, candidate)
                             })
-                            .Where(x => x.Score >= MinimumMatchScore)
+                            .Where(x => x.Score >= LyricMatchingPolicy.MinimumAcceptedMatchScore)
                             .OrderByDescending(x => x.Score)
                             .Select(x => x.Candidate)
                             .ToList();
@@ -149,9 +148,9 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
         Log.Debug($"LyricifyLyricProvider [{SourceApp}] 候选匹配详情: {searchResult.Title} - {searchResult.Artist} (时长: {(searchResult.DurationMs ?? 0) / 1000}s), 计算得分: {matchScore}");
 
         // 3. 统一低分过滤阈值，防止较弱的平台候选进入最终竞争。
-        if (matchScore < MinimumMatchScore)
+        if (matchScore < LyricMatchingPolicy.MinimumAcceptedMatchScore)
         {
-            Log.Info($"LyricifyLyricProvider [{SourceApp}] 匹配分值 {matchScore} 低于准入线 {MinimumMatchScore} 分，放弃采用");
+            Log.Info($"LyricifyLyricProvider [{SourceApp}] 匹配分值 {matchScore} 低于准入线 {LyricMatchingPolicy.MinimumAcceptedMatchScore} 分，放弃采用");
             return null;
         }
 
@@ -167,7 +166,7 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     var candidateScore = ScoreCandidate(track, candidate);
-                    if (candidateScore < MinimumMatchScore)
+                    if (candidateScore < LyricMatchingPolicy.MinimumAcceptedMatchScore)
                     {
                         continue;
                     }
@@ -312,6 +311,6 @@ public sealed class LyricifyLyricProvider : LyricProviderBase
         return _searcherType == Lyricify.Lyrics.Searchers.Searchers.QQMusic &&
                track.SourceApp.Equals("QQMusic", StringComparison.OrdinalIgnoreCase) &&
                track.Duration > TimeSpan.Zero &&
-               track.Duration <= TimeSpan.FromSeconds(61);
+               track.Duration <= LyricMatchingPolicy.QqMusicUnreliableDurationThreshold;
     }
 }

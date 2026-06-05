@@ -24,4 +24,8 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <Resource Include="Assets\PlayerIcons\*.png" />
+  </ItemGroup>
+
 </Project>

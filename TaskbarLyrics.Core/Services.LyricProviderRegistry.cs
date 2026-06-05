@@ -7,21 +7,6 @@ namespace TaskbarLyrics.Core.Services;
 
 public sealed class LyricProviderRegistry : ILyricProviderRegistry
 {
-    private const int SoftTimeoutScore = 85;
-    private const int ImmediateExitScore = 95;
-    private static readonly TimeSpan SoftTimeout = TimeSpan.FromMilliseconds(800);
-    private static readonly TimeSpan OfficialSourceTimeout = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan FallbackProviderTimeout = TimeSpan.FromSeconds(5);
-    private static readonly IReadOnlyDictionary<string, int> SourceQualityWeights =
-        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["QQMusic"] = 6,
-            ["Netease"] = 3,
-            ["Kugou"] = 2,
-            ["LRCLIB"] = 1,
-            ["LrcLib"] = 1
-        };
-
     private readonly IReadOnlyList<ILyricProvider> _providers;
     private readonly IReadOnlyDictionary<ILyricProvider, SemaphoreSlim> _providerGates;
 
@@ -71,7 +56,7 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
             var preferredResult = await RunProviderAsync(
                 preferred,
                 overriddenTrack,
-                OfficialSourceTimeout,
+                LyricMatchingPolicy.OfficialSourceTimeout,
                 cancellationToken);
             return preferredResult.Document is null
                 ? BuildResults()
@@ -86,11 +71,11 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
             var officialProvider = FindProviders(officialSource).FirstOrDefault();
             if (officialProvider is not null)
             {
-                Log.Info($"播放器 [{track.SourceApp}] 已适配，歌词源 [{officialSource}] 进入最长 {OfficialSourceTimeout.TotalSeconds:F0} 秒独占检索阶段。");
+                Log.Info($"播放器 [{track.SourceApp}] 已适配，歌词源 [{officialSource}] 进入最长 {LyricMatchingPolicy.OfficialSourceTimeout.TotalSeconds:F0} 秒独占检索阶段。");
                 var officialResult = await RunProviderAsync(
                     officialProvider,
                     overriddenTrack,
-                    OfficialSourceTimeout,
+                    LyricMatchingPolicy.OfficialSourceTimeout,
                     cancellationToken);
                 if (officialResult.Document is not null)
                 {
@@ -156,7 +141,7 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
     {
         using var batchCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var pendingTasks = providers
-            .Select(provider => RunProviderAsync(provider, track, FallbackProviderTimeout, batchCts.Token))
+            .Select(provider => RunProviderAsync(provider, track, LyricMatchingPolicy.FallbackProviderTimeout, batchCts.Token))
             .ToList();
         var documents = new Dictionary<ILyricProvider, LyricDocument?>();
         var bestScore = 0;
@@ -164,13 +149,13 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
         while (pendingTasks.Count > 0)
         {
             Task completedTask;
-            if (bestScore >= SoftTimeoutScore)
+            if (bestScore >= LyricMatchingPolicy.FallbackSoftWaitScore)
             {
-                var softTimeoutTask = Task.Delay(SoftTimeout, batchCts.Token);
+                var softTimeoutTask = Task.Delay(LyricMatchingPolicy.FallbackSoftWait, batchCts.Token);
                 completedTask = await Task.WhenAny(pendingTasks.Cast<Task>().Append(softTimeoutTask));
                 if (completedTask == softTimeoutTask)
                 {
-                    Log.Info($"回退批次已有 {bestScore} 分候选，{SoftTimeout.TotalMilliseconds:F0} ms 等待窗口结束。");
+                    Log.Info($"回退批次已有 {bestScore} 分候选，{LyricMatchingPolicy.FallbackSoftWait.TotalMilliseconds:F0} ms 等待窗口结束。");
                     batchCts.Cancel();
                     break;
                 }
@@ -191,7 +176,7 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
             var weightedDocument = ApplyQualityWeight(provider, document);
             documents[provider] = weightedDocument;
             bestScore = Math.Max(bestScore, weightedDocument.BestScore);
-            if (bestScore >= ImmediateExitScore)
+            if (bestScore >= LyricMatchingPolicy.FallbackImmediateExitScore)
             {
                 Log.Info($"回退歌词源 [{provider.SourceApp}] 达到 {bestScore} 分，触发高置信快速返回。");
                 batchCts.Cancel();
@@ -204,7 +189,7 @@ public sealed class LyricProviderRegistry : ILyricProviderRegistry
 
     private static LyricDocument ApplyQualityWeight(ILyricProvider provider, LyricDocument document)
     {
-        var qualityWeight = SourceQualityWeights.TryGetValue(provider.SourceApp, out var configuredWeight)
+        var qualityWeight = LyricMatchingPolicy.SourceQualityWeights.TryGetValue(provider.SourceApp, out var configuredWeight)
             ? configuredWeight
             : 0;
         var weightedScore = Math.Min(100, document.BestScore + qualityWeight);

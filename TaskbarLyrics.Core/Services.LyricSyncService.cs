@@ -6,13 +6,8 @@ namespace TaskbarLyrics.Core.Services;
 
 public sealed class LyricSyncService : IDisposable
 {
-    private static readonly TimeSpan PlayerCompDefault = TimeSpan.Zero;
-    private static readonly TimeSpan PlayerCompSpotify = TimeSpan.FromMilliseconds(150);
-    private static readonly TimeSpan PlayerCompNetease = TimeSpan.FromMilliseconds(50);
-    private static readonly TimeSpan PlayerCompQqMusic = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan PlayerCompKugou = TimeSpan.FromMilliseconds(100);
-
     private readonly ILyricProviderRegistry _registry;
+    private readonly Func<string?, bool> _shouldShowTranslation;
     private TrackInfo? _currentTrack;
     private string? _currentTrackId;
     private LyricDocument? _currentDocument;
@@ -23,9 +18,10 @@ public sealed class LyricSyncService : IDisposable
 
     public string? CurrentLyricSourceApp => _currentLyricSourceApp;
 
-    public LyricSyncService(ILyricProviderRegistry registry)
+    public LyricSyncService(ILyricProviderRegistry registry, Func<string?, bool>? shouldShowTranslation = null)
     {
         _registry = registry;
+        _shouldShowTranslation = shouldShowTranslation ?? (_ => true);
     }
 
     public Task<LyricDisplayFrame> GetDisplayFrameAsync(PlaybackSnapshot snapshot)
@@ -60,7 +56,7 @@ public sealed class LyricSyncService : IDisposable
         }
 
         // Apply player-specific compensation
-        var sourceLead = GetPlayerLeadTime(_currentTrack?.SourceApp);
+        var sourceLead = LyricMatchingPolicy.GetPlayerLeadTime(_currentTrack?.SourceApp);
         var position = snapshot.Position + sourceLead;
 
         var lines = _currentDocument.Lines;
@@ -76,13 +72,13 @@ public sealed class LyricSyncService : IDisposable
             // If before first line, show the first line as prepared current
             var firstLine = lines[0];
             string firstText = firstLine.Text;
-            if (!string.IsNullOrWhiteSpace(firstLine.Translation))
+            if (CanShowTranslation() && !string.IsNullOrWhiteSpace(firstLine.Translation))
             {
                 firstText += " (" + firstLine.Translation + ")";
             }
 
             var nextTxt = lines.Count > 1 ? lines[1].Text : "";
-            if (lines.Count > 1 && !string.IsNullOrWhiteSpace(lines[1].Translation))
+            if (CanShowTranslation() && lines.Count > 1 && !string.IsNullOrWhiteSpace(lines[1].Translation))
             {
                 nextTxt += " (" + lines[1].Translation + ")";
             }
@@ -97,14 +93,14 @@ public sealed class LyricSyncService : IDisposable
         // This ensures the "NextLine" correctly shows the next lyric for animation,
         // while still making translations visible in the taskbar's limited space.
         string currentText = currentLine.Text;
-        if (!string.IsNullOrWhiteSpace(currentLine.Translation))
+        if (CanShowTranslation() && !string.IsNullOrWhiteSpace(currentLine.Translation))
         {
             // We use a small space and parens for a clean look in the taskbar
             currentText += " (" + currentLine.Translation + ")";
         }
 
         string nextText = nextLine?.Text ?? "";
-        if (nextLine != null && !string.IsNullOrWhiteSpace(nextLine.Translation))
+        if (CanShowTranslation() && nextLine != null && !string.IsNullOrWhiteSpace(nextLine.Translation))
         {
             nextText += " (" + nextLine.Translation + ")";
         }
@@ -178,6 +174,11 @@ public sealed class LyricSyncService : IDisposable
         return $"{track.Id}|{track.SourceApp}|{track.Title}|{track.Artist}|{track.SongId}|{track.Duration.TotalMilliseconds:F0}";
     }
 
+    private bool CanShowTranslation()
+    {
+        return _shouldShowTranslation(_currentLyricSourceApp);
+    }
+
     private void CancelPendingSearch()
     {
         var cts = _searchCts;
@@ -197,17 +198,4 @@ public sealed class LyricSyncService : IDisposable
         CancelPendingSearch();
     }
 
-    private static TimeSpan GetPlayerLeadTime(string? sourceApp)
-    {
-        if (string.IsNullOrEmpty(sourceApp)) return PlayerCompDefault;
-
-        return sourceApp.ToLowerInvariant() switch
-        {
-            "spotify" => PlayerCompSpotify,
-            "neteasemusic" or "netease" => PlayerCompNetease,
-            "qqmusic" => PlayerCompQqMusic,
-            "kugou" => PlayerCompKugou,
-            _ => PlayerCompDefault
-        };
-    }
 }

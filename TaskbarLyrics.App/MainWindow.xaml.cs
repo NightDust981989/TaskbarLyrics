@@ -235,7 +235,9 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         {
             providers.Add(new LyricifyLyricProvider("Kugou", Lyricify.Lyrics.Searchers.Searchers.Kugou));
         }
-        return new LyricSyncService(new LyricProviderRegistry(providers));
+        return new LyricSyncService(
+            new LyricProviderRegistry(providers),
+            _ => settings?.ShowLyricTranslation == true);
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -355,16 +357,12 @@ public partial class MainWindow : Window, INotifyPropertyChanged
         });
     }
 
-    private static readonly object LogLock = new();
     private static void LogToFile(string message)
     {
         try
         {
             var logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "app_debug.log");
-            lock (LogLock)
-            {
-                File.AppendAllText(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}\n");
-            }
+            LogFileWriter.AppendLine(logPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}");
         }
         catch {}
     }

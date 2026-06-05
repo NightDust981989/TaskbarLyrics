@@ -27,6 +27,8 @@ public sealed class AppSettings
 
     public bool ShowLyricsOnStartup { get; set; } = true;
 
+    public bool ShowLyricTranslation { get; set; } = false;
+
     public double FontSize { get; set; } = 14;
 
     public string FontFamily { get; set; } = "SF Pro Display, SF Pro Text, Segoe UI Variable Text, Segoe UI, Microsoft YaHei UI, Microsoft YaHei";

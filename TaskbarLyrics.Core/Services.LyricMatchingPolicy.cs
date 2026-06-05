@@ -1,0 +1,42 @@
+using System.Collections.Generic;
+
+namespace TaskbarLyrics.Core.Services;
+
+public static class LyricMatchingPolicy
+{
+    public const int MinimumAcceptedMatchScore = 70;
+    public const int FallbackSoftWaitScore = 85;
+    public const int FallbackImmediateExitScore = 95;
+
+    public static readonly TimeSpan FallbackSoftWait = TimeSpan.FromMilliseconds(800);
+    public static readonly TimeSpan OfficialSourceTimeout = TimeSpan.FromSeconds(10);
+    public static readonly TimeSpan FallbackProviderTimeout = TimeSpan.FromSeconds(5);
+    public static readonly TimeSpan QqMusicUnreliableDurationThreshold = TimeSpan.FromSeconds(61);
+
+    public static readonly IReadOnlyDictionary<string, int> SourceQualityWeights =
+        new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["QQMusic"] = 6,
+            ["Netease"] = 3,
+            ["Kugou"] = 2,
+            ["LRCLIB"] = 1,
+            ["LrcLib"] = 1
+        };
+
+    public static TimeSpan GetPlayerLeadTime(string? sourceApp)
+    {
+        if (string.IsNullOrEmpty(sourceApp))
+        {
+            return TimeSpan.Zero;
+        }
+
+        return sourceApp.ToLowerInvariant() switch
+        {
+            "spotify" => TimeSpan.FromMilliseconds(150),
+            "neteasemusic" or "netease" => TimeSpan.FromMilliseconds(50),
+            "qqmusic" => TimeSpan.FromMilliseconds(100),
+            "kugou" => TimeSpan.FromMilliseconds(100),
+            _ => TimeSpan.Zero
+        };
+    }
+}
