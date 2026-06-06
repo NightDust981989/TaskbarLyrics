@@ -26,6 +26,10 @@ public abstract class LyricProviderBase : ILyricProvider
     // 辅助正则 (用于匹配匹配得分逻辑)
     private static readonly Regex GlobalBracketRegex = new(@"[\[［\(（【][^[\]］\)）】【]*?[\]］\)）】【]", RegexOptions.Compiled);
     private static readonly Regex FeatureSuffixRegex = new(@"\s+(feat\.?|ft\.?|with)\s+.*$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LeadingCreditRegex = new(
+        @"^\s*(?:作词|作詞|填词|填詞|作曲|编曲|編曲|词|詞|曲|原唱|翻唱|制作人|製作人|监制|監製|混音|母带|母帶|录音|錄音|和声|和聲|吉他|贝斯|貝斯|鼓|OP|SP|Composer|Lyricist|Lyrics?|Music|Arranger|Producer|Produced\s+by|Written\s+by|Composed\s+by)\s*[:：]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly TimeSpan OpeningDuplicateTimestampWindow = TimeSpan.FromSeconds(3);
 
     // 缓存系统
     private static readonly ConcurrentDictionary<string, LyricDocument?> MemoryCache = new(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +86,8 @@ public abstract class LyricProviderBase : ILyricProvider
         })
         .Where(l => !string.IsNullOrWhiteSpace(l.Text) && l.Text != "//")
         .ToList();
+
+        lines = NormalizeOpeningDuplicateTimestampGroups(lines);
 
         return new LyricDocument(EnsureSyllables(lines), doc.BestScore);
     }
@@ -207,7 +213,59 @@ public abstract class LyricProviderBase : ILyricProvider
             }
         }
 
-        return AlignBilingualLyrics(resultList);
+        return AlignBilingualLyrics(NormalizeOpeningDuplicateTimestampGroups(resultList));
+    }
+
+    private static List<LyricLine> NormalizeOpeningDuplicateTimestampGroups(List<LyricLine> lines)
+    {
+        if (lines.Count < 2)
+        {
+            return lines;
+        }
+
+        var sorted = lines
+            .Select((line, index) => new { Line = line, Index = index })
+            .OrderBy(x => x.Line.Timestamp)
+            .ThenBy(x => x.Index)
+            .ToList();
+
+        var normalized = new List<LyricLine>(lines.Count);
+        for (var i = 0; i < sorted.Count;)
+        {
+            var timestamp = sorted[i].Line.Timestamp;
+            var group = new List<LyricLine>();
+            do
+            {
+                group.Add(sorted[i].Line);
+                i++;
+            }
+            while (i < sorted.Count && sorted[i].Line.Timestamp == timestamp);
+
+            if (timestamp <= OpeningDuplicateTimestampWindow && group.Count > 1)
+            {
+                var nonCreditLines = group
+                    .Where(line => !IsLeadingCreditLine(line.Text))
+                    .ToList();
+
+                if (nonCreditLines.Count > 0)
+                {
+                    normalized.Add(nonCreditLines[^1]);
+                    continue;
+                }
+
+                normalized.Add(group[0]);
+                continue;
+            }
+
+            normalized.AddRange(group);
+        }
+
+        return normalized;
+    }
+
+    private static bool IsLeadingCreditLine(string text)
+    {
+        return !string.IsNullOrWhiteSpace(text) && LeadingCreditRegex.IsMatch(text);
     }
 
     private List<LyricLine> AlignBilingualLyrics(List<LyricLine> rawLines)
@@ -384,5 +442,5 @@ public abstract class LyricProviderBase : ILyricProvider
         }
     }
 
-    private static string CacheFilePathStatic => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarLyrics", "cache", "unified-lyrics-v5.json");
+    private static string CacheFilePathStatic => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TaskbarLyrics", "cache", "unified-lyrics-v6.json");
 }
