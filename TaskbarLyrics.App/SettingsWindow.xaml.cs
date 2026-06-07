@@ -410,7 +410,6 @@ public partial class SettingsWindow : Wpf.Ui.Controls.FluentWindow
     private void ClearLyricCache()
     {
         LyricProviderBase.ClearCache();
-        LrcLibLyricProvider.ClearCache();
         GenericSmtcLyricProvider.ClearCache();
     }
 

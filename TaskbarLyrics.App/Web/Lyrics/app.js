@@ -25,12 +25,13 @@ let transitionOpacityAnimation = 0;
 let transitionGeneration = 0;
 let transitionStartTime = 0;
 let transitionBaseNextOpacity = 0.72;
-let transitionBaseNextScale = 0.923;
-let transitionTargetCurrentScale = 1;
+let transitionBaseNextFontSize = 12;
+let transitionTargetCurrentFontSize = 13;
 let secondaryOpacity = 0.72;
 let lastLineProgress = Number.NaN;
 let lastCurrentLineIndex = -1;
 let lastTrackId = "";
+let metricsUpdatePending = false;
 const transitionDurationMs = 560;
 
 function normalizeWeight(weight) {
@@ -70,7 +71,7 @@ function setTrackOffset(rowCount) {
 }
 
 function setCurrentLine(line) {
-  const safe = toDisplayLine(line, "Waiting for lyrics...");
+  const safe = toDisplayLine(line, "正在匹配歌词...");
   if (currentLineTextEl) {
     currentLineTextEl.textContent = safe;
   }
@@ -104,6 +105,7 @@ function easeOutCubic(t) {
 }
 
 function getSizeEase(t) {
+  // Follow the same direction as slide easing, but settle slightly earlier to reduce tail-end perceptual jumps.
   return easeOutCubic(clamp01(t / 0.86));
 }
 
@@ -152,7 +154,7 @@ function resetForTrackSwitch(safeCurrent, safeNext, progress, currentLineIndex, 
   setIncomingLine("");
   currentLineEl.style.opacity = "";
   nextLineEl.style.opacity = "";
-  nextLineEl.style.transform = "";
+  nextLineEl.style.fontSize = "";
   incomingLineEl.style.opacity = "";
   updateSecondaryOpacity(progress);
   void trackEl.offsetHeight;
@@ -170,6 +172,7 @@ function runTransitionOpacityAnimation(now) {
 
   const elapsed = Math.max(0, now - transitionStartTime);
   const t = clamp01(elapsed / transitionDurationMs);
+  const e = easeOutCubic(t);
   const sizeE = getSizeEase(t);
   const fadeOutE = getFadeOutEase(t);
   const fadeInE = getFadeInEase(t);
@@ -177,9 +180,7 @@ function runTransitionOpacityAnimation(now) {
   currentLineEl.style.opacity = String(0.98 + ((0.16 - 0.98) * fadeOutE));
   nextLineEl.style.opacity = String(transitionBaseNextOpacity + ((0.98 - transitionBaseNextOpacity) * fadeInE));
   incomingLineEl.style.opacity = secondaryOpacity.toFixed(3);
-  
-  const currentScale = transitionBaseNextScale + ((transitionTargetCurrentScale - transitionBaseNextScale) * sizeE);
-  nextLineEl.style.transform = `translateY(var(--primary-offset-y)) scale(${currentScale.toFixed(4)})`;
+  nextLineEl.style.fontSize = `${(transitionBaseNextFontSize + ((transitionTargetCurrentFontSize - transitionBaseNextFontSize) * sizeE)).toFixed(3)}px`;
 
   if (t < 1) {
     transitionOpacityAnimation = window.requestAnimationFrame(runTransitionOpacityAnimation);
@@ -194,22 +195,21 @@ function applyFrame(safeCurrent, safeNext, progress, currentLineIndex) {
 
   if (hasLineIndex) {
     if (!Number.isInteger(lastCurrentLineIndex) || lastCurrentLineIndex < 0) {
-      setCurrentLine(safeCurrent);
-      setSecondaryLine(safeNext);
-      updateSecondaryOpacity(p);
+      // If we were in a non-lyric state (e.g. "正在匹配歌词..."),
+      // use a transition to slide into the first line smoothly.
+      if (displayedCurrent === "正在匹配歌词...") {
+        startTransition(safeCurrent, safeNext, p, currentLineIndex);
+      } else {
+        setCurrentLine(safeCurrent);
+        setSecondaryLine(safeNext);
+        updateSecondaryOpacity(p);
+      }
       lastCurrentLineIndex = currentLineIndex;
       lastLineProgress = p;
       return;
     }
 
     if (currentLineIndex !== lastCurrentLineIndex) {
-      // Defensive guard: ignore backward index changes caused by
-      // SMTC timeline extrapolation oscillation. Only forward transitions
-      // (increasing index) should trigger scroll animations.
-      if (currentLineIndex < lastCurrentLineIndex) {
-        lastLineProgress = p;
-        return;
-      }
       startTransition(safeCurrent, safeNext, p, currentLineIndex);
     } else {
       if (safeCurrent !== displayedCurrent) {
@@ -247,37 +247,34 @@ function applyFrame(safeCurrent, safeNext, progress, currentLineIndex) {
 }
 
 function updateMetrics() {
+  if (isTransitioning) {
+    metricsUpdatePending = true;
+    return;
+  }
+
+  metricsUpdatePending = false;
+  // WPF host extends the WebView 2px downward for descender safety; exclude that buffer from row metrics.
   const viewportDescenderBufferPx = 2;
   const measuredViewportHeight = viewportEl.clientHeight || 30;
   const hostHeight = Math.max(26, measuredViewportHeight - viewportDescenderBufferPx);
   rowHeightPx = Math.max(13, Math.floor(hostHeight / 2));
   rowGapPx = Math.max(0, hostHeight - (rowHeightPx * 2));
   linePitchPx = rowHeightPx + rowGapPx;
-  
-  // Provide baseline compensation for descenders
-  // In Fluent Design, placing baseline consistently is crucial.
-  const baselineOffsetPx = Math.max(0, Math.floor(rowHeightPx * 0.1));
-  
-  const currentSizeMax = Math.max(11.2, rowHeightPx * 0.88);
-  const currentSize = Math.min(requestedFontSize, currentSizeMax);
+  const currentSizeMax = Math.max(11.2, rowHeightPx * 0.92);
+  currentSize = Math.min(requestedFontSize, currentSizeMax);
   const nextSize = Math.max(9, currentSize * 0.92);
-  
-  const currentScale = 1;
-  const nextScale = nextSize / currentSize;
-  
   root.style.setProperty("--row-height", `${rowHeightPx}px`);
   root.style.setProperty("--row-gap", `${rowGapPx}px`);
   root.style.setProperty("--line-pitch", `${linePitchPx}px`);
-  root.style.setProperty("--font-size", `${currentSize.toFixed(2)}px`);
-  root.style.setProperty("--current-scale", `${currentScale.toFixed(4)}`);
-  root.style.setProperty("--next-scale", `${nextScale.toFixed(4)}`);
-  root.style.setProperty("--baseline-offset", `${baselineOffsetPx}px`);
+  root.style.setProperty("--current-size", `${currentSize.toFixed(2)}px`);
+  root.style.setProperty("--next-size", `${nextSize.toFixed(2)}px`);
   setTrackOffset(0);
 }
 
 function finalizeTransition(promotedCurrent, upcomingNext, progress, promotedLineIndex = -1) {
   const incomingEndOpacity = Number.parseFloat(window.getComputedStyle(incomingLineEl).opacity || "0.72");
 
+  // Freeze transitions while swapping layers to avoid visible "grow then shrink" rebound.
   trackEl.classList.add("no-anim");
   stopTransitionOpacityAnimation();
   setCurrentLine(promotedCurrent);
@@ -287,11 +284,12 @@ function finalizeTransition(promotedCurrent, upcomingNext, progress, promotedLin
   currentLineEl.classList.remove("leaving");
   nextLineEl.classList.remove("promoting");
   setTrackOffset(0);
+  // Reset inline opacity channels while transitions are disabled; otherwise a brief flash can appear.
   currentLineEl.style.opacity = "";
   nextLineEl.style.opacity = "";
   secondaryOpacity = Number.isFinite(incomingEndOpacity) ? incomingEndOpacity : 0.72;
   incomingLineEl.style.opacity = "";
-  nextLineEl.style.transform = "";
+  nextLineEl.style.fontSize = "";
   updateSecondaryOpacity(progress);
   void trackEl.offsetHeight;
   trackEl.classList.remove("no-anim");
@@ -299,6 +297,9 @@ function finalizeTransition(promotedCurrent, upcomingNext, progress, promotedLin
   lastLineProgress = clamp01(progress);
   if (Number.isInteger(promotedLineIndex) && promotedLineIndex >= 0) {
     lastCurrentLineIndex = promotedLineIndex;
+  }
+  if (metricsUpdatePending) {
+    updateMetrics();
   }
 
   if (queuedFrame) {
@@ -316,17 +317,15 @@ function startTransition(newCurrent, newNext, progress, currentLineIndex = -1) {
 
   isTransitioning = true;
   const generation = ++transitionGeneration;
-  const promoted = toDisplayLine(newCurrent, "Waiting for lyrics...");
+  const promoted = toDisplayLine(newCurrent, "正在匹配歌词...");
   const upcoming = toDisplayLine(newNext, " ");
   transitionBaseNextOpacity = secondaryOpacity;
-  
-  const nextScaleFallback = Number.parseFloat(window.getComputedStyle(root).getPropertyValue("--next-scale") || "0.923");
-  transitionBaseNextScale = nextScaleFallback;
-  transitionTargetCurrentScale = 1;
-  
+  transitionBaseNextFontSize = Number.parseFloat(window.getComputedStyle(nextLineEl).fontSize || "12");
+  transitionTargetCurrentFontSize = Number.parseFloat(window.getComputedStyle(currentLineEl).fontSize || "13");
   transitionStartTime = 0;
   stopTransitionOpacityAnimation();
 
+  // Start from baseline state first so promoting font-size always animates from second-line size.
   trackEl.classList.add("no-anim");
   trackEl.classList.remove("animating");
   currentLineEl.classList.remove("leaving");
@@ -338,7 +337,7 @@ function startTransition(newCurrent, newNext, progress, currentLineIndex = -1) {
   setIncomingLine(upcoming);
   currentLineEl.style.opacity = "";
   nextLineEl.style.opacity = "";
-  nextLineEl.style.transform = `translateY(var(--primary-offset-y)) scale(${transitionBaseNextScale})`;
+  nextLineEl.style.fontSize = `${transitionBaseNextFontSize.toFixed(3)}px`;
   incomingLineEl.style.opacity = secondaryOpacity.toFixed(3);
   void trackEl.offsetHeight;
   trackEl.classList.remove("no-anim");
@@ -401,7 +400,7 @@ if (typeof ResizeObserver !== "undefined") {
 
 window.taskbarLyrics = {
   setLyrics(current, next, progress, currentLineIndex, trackId) {
-    const safeCurrent = toDisplayLine(current, "Waiting for lyrics...");
+    const safeCurrent = toDisplayLine(current, "正在匹配歌词...");
     const safeNext = toDisplayLine(next, " ");
     const p = clamp01(progress);
     const lineIndex = Number(currentLineIndex);
@@ -431,20 +430,34 @@ window.taskbarLyrics = {
 
     if (coverImageEl) {
       if (uri.length > 0) {
-        if (coverImageEl.src !== uri) {
-          coverImageEl.classList.remove("loaded");
-          coverImageEl.onload = () => coverImageEl.classList.add("loaded");
-          coverImageEl.src = uri;
-        } else {
-          coverImageEl.classList.add("loaded");
-        }
-        
-        if (coverFallbackEl) {
-          coverFallbackEl.style.display = "none";
-        }
+        coverImageEl.style.opacity = "0";
+        coverImageEl.style.transform = "scale(1.035)";
+        coverImageEl.onload = () => {
+          coverImageEl.style.display = "block";
+          window.requestAnimationFrame(() => {
+            coverImageEl.style.opacity = "1";
+            coverImageEl.style.transform = "scale(1)";
+          });
+          if (coverFallbackEl) {
+            coverFallbackEl.style.display = "none";
+          }
+        };
+        coverImageEl.onerror = () => {
+          coverImageEl.style.display = "none";
+          coverImageEl.style.opacity = "0";
+          coverImageEl.style.transform = "scale(1.035)";
+          if (coverFallbackEl) {
+            coverFallbackEl.style.display = "flex";
+          }
+        };
+        coverImageEl.src = uri;
       } else {
-        coverImageEl.classList.remove("loaded");
+        coverImageEl.onload = null;
+        coverImageEl.onerror = null;
         coverImageEl.removeAttribute("src");
+        coverImageEl.style.display = "none";
+        coverImageEl.style.opacity = "0";
+        coverImageEl.style.transform = "scale(1.035)";
         if (coverFallbackEl) {
           coverFallbackEl.style.display = "flex";
         }
@@ -459,6 +472,7 @@ window.taskbarLyrics = {
 
     root.style.setProperty("--font-family", payload.fontFamily || "\"SF Pro Display\", \"Segoe UI Variable Display\", \"Segoe UI Variable Text\", \"Microsoft YaHei UI\", sans-serif");
     requestedFontSize = Number(payload.fontSize) || 13;
+    root.style.setProperty("--font-size", `${requestedFontSize}px`);
     updateMetrics();
     root.style.setProperty("--font-weight", normalizeWeight(payload.fontWeight));
 
@@ -468,6 +482,14 @@ window.taskbarLyrics = {
 
     if (payload.secondaryColor && CSS.supports("color", payload.secondaryColor)) {
       root.style.setProperty("--secondary", payload.secondaryColor);
+    }
+
+    if (payload.surfaceColor && CSS.supports("background-color", payload.surfaceColor)) {
+      root.style.setProperty("--surface-color", payload.surfaceColor);
+    }
+
+    if (payload.surfaceShadow && CSS.supports("box-shadow", payload.surfaceShadow)) {
+      root.style.setProperty("--surface-shadow", payload.surfaceShadow);
     }
 
     if (payload.textShadow && CSS.supports("text-shadow", payload.textShadow)) {

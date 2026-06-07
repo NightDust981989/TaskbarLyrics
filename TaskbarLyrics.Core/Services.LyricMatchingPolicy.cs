@@ -19,8 +19,7 @@ public static class LyricMatchingPolicy
             ["QQMusic"] = 6,
             ["Netease"] = 3,
             ["Kugou"] = 2,
-            ["LRCLIB"] = 1,
-            ["LrcLib"] = 1
+            ["LRCLIB"] = 1
         };
 
     public static TimeSpan GetPlayerLeadTime(string? sourceApp)

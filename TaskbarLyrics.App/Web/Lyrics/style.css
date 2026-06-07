@@ -7,11 +7,12 @@
   --row-height: 14px;
   --row-gap: 1px;
   --line-pitch: 15px;
-  --current-scale: 1;
-  --next-scale: 0.923;
+  --current-size: 13px;
+  --next-size: 12px;
   --primary-offset-y: 1px;
   --secondary-offset-y: 2px;
-  --baseline-offset: 1px;
+  --surface-color: transparent;
+  --surface-shadow: none;
   --text-shadow: 0 1px 2px rgba(0, 0, 0, 0.36);
 }
 
@@ -23,8 +24,7 @@
   -webkit-user-select: none;
 }
 
-html,
-body {
+html, body {
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -38,11 +38,12 @@ body {
 .layout {
   width: 100%;
   height: 100%;
-  padding: 0;
+  padding: 0 4px;
   overflow: hidden;
-  background: transparent;
+  background: var(--surface-color);
   border: 0;
-  border-radius: 0;
+  border-radius: 8px;
+  box-shadow: var(--surface-shadow);
 }
 
 .shell {
@@ -80,22 +81,19 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: none;
   opacity: 0;
-  transition: opacity 800ms cubic-bezier(0.2, 0.9, 0.1, 1), transform 800ms cubic-bezier(0.2, 0.9, 0.1, 1);
-  transform: scale(1.05);
-  display: block;
-}
-
-.cover-image.loaded {
-  opacity: 1;
-  transform: scale(1);
+  transform: scale(1.035);
+  transition:
+    opacity 420ms cubic-bezier(0.2, 0.9, 0.1, 1),
+    transform 420ms cubic-bezier(0.2, 0.9, 0.1, 1);
 }
 
 .lyrics-pane {
   min-width: 0;
   height: 100%;
   overflow: hidden;
-  padding: 3px 0 0 5px;
+  padding: 3px 4px 0 2px;
 }
 
 .viewport {
@@ -132,17 +130,15 @@ body {
   min-height: var(--row-height);
   display: flex;
   align-items: center;
-  line-height: var(--row-height);
-  padding-bottom: var(--baseline-offset); /* Baseline tweak for descenders */
-  letter-spacing: 0.06px;
+  line-height: 1.12;
+  letter-spacing: 0;
   transform-origin: left center;
   text-shadow: var(--text-shadow);
   overflow: visible;
-  will-change: transform, opacity, color; /* GPU Accel hint */
   transition:
-    opacity 560ms cubic-bezier(0.2, 0.9, 0.1, 1),
+    opacity 560ms cubic-bezier(0.22, 0.72, 0.24, 1),
     color 280ms ease,
-    transform 560ms cubic-bezier(0.2, 0.9, 0.1, 1);
+    transform 560ms cubic-bezier(0.22, 0.72, 0.24, 1);
 }
 
 .line-text {
@@ -152,24 +148,23 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: inherit;
-  mask-image: linear-gradient(to right, rgba(0, 0, 0, 1) 94%, rgba(0, 0, 0, 0) 100%);
-  -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 1) 94%, rgba(0, 0, 0, 0) 100%);
+  padding-bottom: 2px;
 }
 
 .current-line {
-  font-size: var(--font-size);
+  font-size: var(--current-size);
   font-weight: var(--font-weight);
   color: var(--primary);
   opacity: 0.98;
-  transform: translateY(var(--primary-offset-y)) scale(var(--current-scale));
+  transform: translateY(var(--primary-offset-y));
 }
 
 .next-line {
-  font-size: var(--font-size);
+  font-size: var(--next-size);
   font-weight: var(--font-weight);
   color: var(--secondary);
   opacity: 0.72;
-  transform: translateY(var(--secondary-offset-y)) scale(var(--next-scale));
+  transform: translateY(var(--secondary-offset-y));
 }
 
 .incoming-line {
@@ -178,10 +173,10 @@ body {
 
 .current-line.leaving {
   opacity: 0.16;
-  transform: translateY(var(--primary-offset-y)) scale(calc(var(--current-scale) * 0.972));
+  transform: translateY(var(--primary-offset-y)) scale(0.972);
 }
 
 .next-line.promoting {
   color: var(--primary);
-  transform: translateY(var(--primary-offset-y)) scale(var(--current-scale));
+  transform: translateY(var(--primary-offset-y));
 }
